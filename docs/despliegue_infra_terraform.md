@@ -186,7 +186,10 @@ Outputs relevantes para explorar por consola (sección 7 del lab):
 ## 8. Subir el dataset y ejecutar el ETL (pasos manuales, fuera de Terraform)
 
 Ver la guía detallada en
-[prueba_manual_pipeline.md](prueba_manual_pipeline.md). Resumen:
+[prueba_manual_pipeline.md](prueba_manual_pipeline.md) (consola + AWS
+CLI) o en
+[prueba_manual_consola_aws.md](prueba_manual_consola_aws.md) (solo
+consola, sin ningún comando de terminal). Resumen:
 
 1. Sube `data/orders.csv` a
    `s3://<data_lake_bucket_name>/bronze/orders/source=<nombre-origen>/`

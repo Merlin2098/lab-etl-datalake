@@ -1,12 +1,27 @@
 # Laboratorio ETL Serverless y Data Lake con AWS
 
-Implementación en código (Terraform + PySpark + SQL) del laboratorio de
-la sesión 4 del bootcamp de Data Engineering:
-[docs/sesion_04_laboratorio_challenges.md](docs/sesion_04_laboratorio_challenges.md).
+Este repositorio es la implementación en código (Terraform + PySpark +
+SQL) del laboratorio de la sesión 4 del bootcamp de Data Engineering. Si
+nunca has trabajado con un Data Lake en AWS, este README te explica los
+conceptos a medida que recorres el proyecto — no necesitas saber Glue,
+Athena o Terraform de antemano.
 
-Construye un Data Lake medallion (**Bronze → Silver → Gold**) sobre datos
-de pedidos (`orders`), desplegado con Terraform, procesado con AWS Glue
-(PySpark), catalogado con Glue Crawlers, y consultado con Athena.
+## El problema que resuelve este laboratorio
+
+Una empresa recibe pedidos (`orders`) todos los días en archivos CSV
+crudos. Con el tiempo, surgen tres necesidades típicas de cualquier
+equipo de datos:
+
+1. **Conservar los datos originales** sin modificarlos, por si hay que
+   reprocesar o auditar.
+2. **Limpiar y estandarizar** esos datos (quitar duplicados, corregir
+   tipos, descartar filas inválidas) antes de que alguien los analice.
+3. **Preparar datos listos para consumo** (agregaciones, métricas) para
+   que un analista o un dashboard los consulte sin tener que repetir la
+   limpieza cada vez.
+
+La arquitectura que resuelve esto se llama **medallion**: tres capas
+llamadas Bronze, Silver y Gold.
 
 ```text
 data/orders.csv (o cualquier CSV con el mismo esquema)
@@ -32,64 +47,117 @@ por source)
      Athena (queries en src/queries/)
 ```
 
+| Capa | Qué contiene | Por qué existe |
+|---|---|---|
+| **Bronze** | Los datos crudos, tal como llegaron. | Nunca se sobrescriben ni se limpian in-place: si algo sale mal en Silver/Gold, siempre puedes volver a procesar desde el original. |
+| **Silver** | Los mismos datos, limpios: tipos correctos, sin duplicados, sin valores inválidos. | Es la "fuente de verdad" confiable — cualquiera puede consultarla sin preocuparse por basura en los datos. |
+| **Gold** | Datos agregados, listos para análisis (ej. ventas por ciudad y fecha). | Un analista de negocio no necesita re-calcular agregaciones cada vez que abre un dashboard. |
+
+## Los servicios de AWS involucrados, y para qué sirve cada uno
+
+Si es tu primera vez con estos servicios, esta tabla resume el rol de
+cada uno en el pipeline — profundiza en cada concepto según avances por
+las guías de la siguiente sección.
+
+| Servicio | Rol en este laboratorio |
+|---|---|
+| **Terraform** | Crea toda la infraestructura de AWS de forma reproducible (S3, IAM, Glue, Athena) a partir de código versionado, en vez de clics manuales en la consola. |
+| **Amazon S3** | Almacena físicamente los archivos de las tres capas (Bronze/Silver/Gold) como objetos dentro de un bucket. |
+| **AWS Glue Job** | Ejecuta el código PySpark (`src/glue/transform.py`) que transforma Bronze → Silver → Gold. Es "el ETL" en sí. |
+| **AWS Glue Crawler** | Escanea los archivos Parquet en S3 y genera automáticamente el catálogo de metadata (nombres de columnas, tipos, particiones) — sin esto, Athena no sabría qué hay en esos archivos. |
+| **AWS Glue Data Catalog** | El "diccionario" de tablas: qué columnas tiene `silver_orders`, dónde vive en S3, cómo está particionada `gold_orders`. Lo llenan los Crawlers. |
+| **Amazon Athena** | Motor de consultas SQL que lee directamente los archivos en S3 usando el catálogo de Glue — no hay una base de datos tradicional detrás, los datos siguen viviendo en S3 (concepto de *schema-on-read*). |
+
+Un concepto clave para el examen de certificación y para este lab:
+**Glue Job vs Glue Crawler no son lo mismo**. El Job *transforma* datos
+(ejecuta código). El Crawler *descubre* metadata (no toca ni cambia los
+datos). Verás esta distinción puesta a prueba en los challenges del
+enunciado del laboratorio.
+
+> **Nota sobre Lake Formation:** el enunciado del laboratorio
+> (`docs/sesion_04_laboratorio_challenges.md`) incluye conceptos de AWS
+> Lake Formation (gobierno de permisos sobre el Data Lake, más allá de
+> IAM). Este stack de Terraform **no despliega Lake Formation** — queda
+> como ejercicio conceptual del enunciado, no como infraestructura de
+> este repo. No busques recursos de Lake Formation en la consola después
+> de desplegar; no existen aquí.
+
 ## Por dónde empezar
 
-Si es tu primera vez en este repo, sigue este orden:
+Sigue este orden — cada paso te lleva a una guía más detallada:
 
-1. **Lee el enunciado del laboratorio**:
+1. **Lee el enunciado completo del laboratorio**:
    [docs/sesion_04_laboratorio_challenges.md](docs/sesion_04_laboratorio_challenges.md)
-   — contiene el caso de negocio, los conceptos (Bronze/Silver/Gold, Glue
-   Crawler vs Job, partition pruning, Lake Formation, Athena Federated
-   Query) y los challenges que debes poder responder al final.
+   — contiene el caso de negocio completo, los conceptos que debes
+   entender (medallion, partition pruning, Athena Federated Query,
+   Lake Formation) y los challenges que debes poder responder al final.
+   Léelo antes de tocar código: te da el "por qué" de cada decisión que
+   verás en `infra/` y `src/`.
 2. **Despliega la infraestructura**:
    [docs/despliegue_infra_terraform.md](docs/despliegue_infra_terraform.md)
-   — paso a paso de `terraform init/plan/apply`, incluyendo los problemas
-   reales (eventual consistency de IAM, nombres de tabla del Crawler) que
-   se encontraron construyendo este stack y cómo se resolvieron.
-3. **Ejecuta el pipeline manualmente**:
-   [docs/prueba_manual_pipeline.md](docs/prueba_manual_pipeline.md) —
-   sube el dataset, corre el Glue Job, corre los Crawlers, consulta con
-   Athena. Cubre consola y AWS CLI para cada paso.
-4. **Repite los challenges del laboratorio** contra tu propio despliegue
-   para verificar que entiendes cada componente, no solo que "funcionó".
+   — paso a paso de `terraform init/plan/apply`. Incluye problemas reales
+   que aparecieron construyendo este stack contra AWS real (no solo la
+   teoría) y cómo se diagnosticaron — útil para cuando a ti te pase algo
+   parecido.
+3. **Ejecuta el pipeline y valida el resultado.** Tienes dos guías según
+   tu preferencia:
+   - [docs/prueba_manual_consola_aws.md](docs/prueba_manual_consola_aws.md)
+     — **recomendada si es tu primera vez**: todo por clics en la consola
+     web de AWS, sin ningún comando de terminal. Ideal para ver
+     visualmente qué hace cada servicio.
+   - [docs/prueba_manual_pipeline.md](docs/prueba_manual_pipeline.md) —
+     los mismos pasos, con la alternativa de AWS CLI para repetirlos
+     rápido una vez que ya entiendes el flujo.
+4. **Vuelve al enunciado del laboratorio** y responde los challenges
+   (Parte 16 en adelante) contra tu propio despliegue — el objetivo no es
+   que "funcione", es que puedas explicar por qué existe cada componente.
 
 ## Qué hay en este repo
 
 | Ruta | Qué es |
 |---|---|
-| `infra/` | Terraform: S3 (data lake), Glue (database, job, crawlers), Athena (workgroup), IAM, CloudWatch. |
-| `src/glue/transform.py` | Script PySpark del Glue Job: limpia y deduplica Bronze → Silver, agrega Silver → Gold. |
-| `src/queries/` | Queries SQL de referencia para Athena (`01_bronze.sql`, `02_silver.sql`, `03_gold.sql`). |
-| `data/orders.csv` | Dataset sintético de ejemplo (pedidos), con duplicados y valores inválidos a propósito. |
-| `scripts/generate_orders_dataset.py` | Por defecto genera un dataset nuevo por corrida (`data/orders-<timestamp>.csv`); `--fixed` regenera el `data/orders.csv` determinista. |
-| `tests/aws/test_datalake_e2e.py` | Test de carga real (no un smoke test): ejecuta el pipeline completo contra AWS real y valida los resultados. |
-| `docs/` | Guías de despliegue, prueba manual, y el spec de diseño con el historial de decisiones e incidentes reales. |
+| `infra/` | Terraform: bucket S3 del data lake, Glue (database, job, crawlers), Athena (workgroup), rol IAM, CloudWatch Logs. |
+| `src/glue/transform.py` | El script PySpark que ejecuta el Glue Job: limpia y deduplica Bronze → Silver, agrega Silver → Gold. Es el corazón del ETL — vale la pena leerlo completo. |
+| `src/queries/` | Queries SQL de referencia para pegar en Athena (`01_bronze.sql`, `02_silver.sql`, `03_gold.sql`). |
+| `data/orders.csv` | Dataset sintético de ejemplo (pedidos), con duplicados y valores inválidos a propósito — así ves que la limpieza de Silver realmente hace algo. |
+| `scripts/generate_orders_dataset.py` | Genera un dataset nuevo cada vez que lo corres (ver sección siguiente). |
+| `tests/aws/test_datalake_e2e.py` | Un test automatizado que corre el pipeline completo contra AWS real. Útil para verificar rápido que todo sigue funcionando, no para aprender (para eso están las guías manuales). |
+| `docs/` | Todas las guías mencionadas arriba, más el historial de diseño con los incidentes reales encontrados al construir este stack. |
 
-## El dataset: `orders`
+## El dataset de ejemplo: `orders`
 
 Columnas: `order_id, customer_id, order_date, status, amount, city,
-carrier`. El CSV de ejemplo tiene 40 filas base + 2 duplicados
-intencionales (mismo `order_id`, fecha posterior — simula un pedido
-re-enviado) y algunos `amount` inválidos/vacíos, para que el paso Silver
-tenga limpieza real que hacer, no solo un passthrough.
+carrier`. El CSV de ejemplo (`data/orders.csv`) tiene 40 filas base + 2
+duplicados intencionales (mismo `order_id`, fecha posterior — simula un
+pedido re-enviado) y algunas filas con `amount` inválido o vacío. Esto es
+deliberado: si Silver simplemente copiara Bronze sin cambios, no
+aprenderías nada — con datos "sucios" puedes *verificar* que la limpieza
+ocurrió (menos filas en Silver que en Bronze, sin duplicados, sin montos
+inválidos).
 
-Por defecto, `scripts/generate_orders_dataset.py` genera un dataset
-**nuevo en cada corrida** (sin necesidad de pasar ningún argumento —
-sirve también al ejecutarlo directo desde el IDE):
+### Generar tu propio dataset
+
+Por defecto, `scripts/generate_orders_dataset.py` genera un archivo
+**nuevo cada vez que lo ejecutas** (sin necesidad de pasar ningún
+argumento — funciona igual si lo corres desde la terminal o con el botón
+"Run" de tu IDE):
 
 ```bash
 uv run python scripts/generate_orders_dataset.py
-# → escribe a data/orders-<timestamp>.csv, listo para subir a su propio source=
+# → escribe a data/orders-<timestamp>.csv, listo para subir a su propio origen
 ```
 
-Para regenerar el `data/orders.csv` **fijo y determinista** que usa el
-test E2E (`tests/aws/test_datalake_e2e.py`), usa `--fixed`:
+Si en cambio necesitas el dataset **fijo y determinista** del que depende
+el test automatizado (`tests/aws/test_datalake_e2e.py`), pide
+explícitamente `--fixed`:
 
 ```bash
 uv run python scripts/generate_orders_dataset.py --fixed
+# → siempre regenera exactamente data/orders.csv, con los mismos duplicados
 ```
 
-También puedes crear una variante puntual con más filas u otro seed:
+También puedes personalizar cuántas filas genera o fijar un seed
+concreto:
 
 ```bash
 uv run python scripts/generate_orders_dataset.py --rows 100 --seed 7 --out data/orders_grande.csv
@@ -97,38 +165,43 @@ uv run python scripts/generate_orders_dataset.py --rows 100 --seed 7 --out data/
 
 ## Múltiples orígenes con el mismo esquema
 
-El pipeline soporta más de una fuente de datos (ej. distintas tiendas o
-canales) siempre que compartan el **mismo esquema** de columnas, mediante
-una partición Hive-style `source=<nombre>/` en Bronze:
+Imagina que además de tu tienda tienes otro canal de ventas — mismos
+campos (`order_id`, `amount`, `city`...), pero otra fuente de datos. Este
+pipeline soporta eso mediante una partición Hive-style `source=<nombre>/`
+dentro de Bronze:
 
-```bash
-aws s3 cp data/orders.csv "s3://<bucket>/bronze/orders/source=tienda_a/orders.csv"
-aws s3 cp otro_origen.csv "s3://<bucket>/bronze/orders/source=tienda_b/orders.csv"
+```text
+bronze/orders/source=tienda_a/orders.csv
+bronze/orders/source=tienda_b/orders.csv
 ```
 
-Un solo Glue Job procesa ambos orígenes en la misma corrida; `source`
-queda como columna en Silver y como partición en Gold (`WHERE source =
-'tienda_a'`). Si subes el CSV directo a `bronze/orders/orders.csv`, sin
-`source=`, el job asigna `source = "default"` automáticamente — no rompe
-el flujo simple de un solo origen.
+El mismo Glue Job procesa ambos orígenes en una sola corrida; `source`
+queda disponible como columna en Silver y como partición en Gold (útil
+para filtrar después: `WHERE source = 'tienda_a'`). Si subes el CSV
+directo a `bronze/orders/orders.csv`, sin carpeta `source=`, el pipeline
+también funciona — asigna `source = "default"` automáticamente, así que
+el flujo simple de un solo origen nunca se rompe.
 
-**Un dataset con columnas distintas** (otra entidad de negocio, como
-`customers` en vez de otra fuente de `orders`) **no encaja aquí** —
-necesitaría su propio script PySpark y su propio Glue Job, no una
-partición. Ver el docstring de
+**Un dataset con columnas completamente distintas** (por ejemplo
+`customers` en vez de otra fuente de `orders`) **no encaja en este
+mecanismo** — necesitaría su propio script PySpark y su propio Glue Job,
+porque una partición no cambia el esquema de columnas, solo segmenta
+datos que ya comparten la misma forma. Ver el docstring de
 [src/glue/transform.py](src/glue/transform.py) para el detalle técnico.
 
 ## Probar que todo funciona
 
-Después de desplegar la infraestructura (ver guía de despliegue), puedes
-validar el pipeline completo de dos formas:
+Después de desplegar la infraestructura, tienes dos formas de validar el
+pipeline:
 
-**Manual, paso a paso** (recomendado para aprender qué hace cada
+**Manual, paso a paso** (la forma en que aprendes qué hace cada
 servicio): sigue
-[docs/prueba_manual_pipeline.md](docs/prueba_manual_pipeline.md).
+[docs/prueba_manual_consola_aws.md](docs/prueba_manual_consola_aws.md)
+(solo consola) o
+[docs/prueba_manual_pipeline.md](docs/prueba_manual_pipeline.md)
+(consola + CLI).
 
-**Automatizado** (más rápido para confirmar que un cambio no rompió
-nada):
+**Automatizado** (rápido, pero no reemplaza entender cada paso):
 
 ```bash
 set -a
@@ -137,27 +210,32 @@ set +a
 uv run python -m pytest tests/aws/test_datalake_e2e.py -m cloud -v -s
 ```
 
-Este test sube el dataset real, corre el Glue Job real, corre los
+Este test sube un dataset real, corre el Glue Job real, corre los
 Crawlers reales, y valida con queries Athena reales que Silver deduplicó
-correctamente y que Gold reconcilia con Silver — no es un smoke test, es
+correctamente y que Gold reconcilia con Silver. No es un smoke test — es
 una ejecución real con costo real (Glue DPU-hours, datos escaneados por
-Athena). Tarda ~4-6 minutos.
+Athena). Tarda entre 4 y 6 minutos.
 
 ## Convenciones del proyecto
 
 Este repo sigue el contrato definido en [AGENTS.md](AGENTS.md): Terraform
-separado por servicio en `infra/`, SQL separado de Python, configuración
-sobre hardcoding, y aprobación explícita antes de cualquier `terraform
-apply`/`destroy` real. Para dependencias Python se usa
-[`uv`](https://docs.astral.sh/uv/) (`uv sync` para instalar, `uv run`
-para ejecutar).
+separado por servicio dentro de `infra/`, SQL separado de Python,
+configuración sobre valores hardcodeados, y aprobación explícita antes de
+cualquier `terraform apply`/`destroy` real (nunca lo ejecutes sin
+entender qué va a crear o destruir). Para dependencias Python se usa
+[`uv`](https://docs.astral.sh/uv/): `uv sync` para instalar, `uv run`
+para ejecutar cualquier script o test.
 
-## Historial de diseño e incidentes reales
+## Cuando algo falla
 
-[docs/superpowers/specs/2026-09-22-medallion-datalake-design.md](docs/superpowers/specs/2026-09-22-medallion-datalake-design.md)
-documenta no solo el diseño original, sino los problemas reales que
-aparecieron al desplegar contra AWS real (condiciones de carrera en Lake
-Formation, colisión de nombres de tabla en el Crawler, tipos de columna
-de partición, migración de esquema de particiones) y cómo se
-diagnosticaron y resolvieron — útil como referencia de troubleshooting
-más allá de este laboratorio específico.
+Construir este stack contra AWS real (no solo en teoría) expuso varios
+problemas que probablemente encontrarás tú también si experimentas con tu
+propio despliegue: condiciones de carrera al crear roles IAM, un Crawler
+que le pone nombres impredecibles a las tablas si no se configura bien
+(dos crawlers separados en vez de uno con dos rutas), y un tipo de
+columna de partición que rompe una query si no usas comillas. Estos casos
+están documentados con el error exacto y la solución, como notas
+"Insight", dentro de
+[docs/despliegue_infra_terraform.md](docs/despliegue_infra_terraform.md)
+— revísalo si algo no funciona como esperas, antes de asumir que rompiste
+algo tú.

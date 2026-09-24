@@ -11,7 +11,10 @@ qué, y cómo se automatizaría más adelante.
 
 Todos los pasos tienen dos vías: **Consola** (para explorar visualmente,
 como pide el laboratorio) y **AWS CLI** (para repetir rápido). Usa la que
-prefieras; los resultados son los mismos recursos reales.
+prefieras; los resultados son los mismos recursos reales. Si quieres una
+guía que use **solo consola, sin absolutamente ningún comando de
+terminal**, usa
+[prueba_manual_consola_aws.md](prueba_manual_consola_aws.md) en su lugar.
 
 ## 0. Prerrequisitos
 
