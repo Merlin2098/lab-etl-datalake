@@ -87,6 +87,14 @@ Gold — para que las tablas resultantes en el catálogo se llamen siempre
 5. Repite los pasos 2-4 con el crawler
    `<project_name>-gold-crawler`.
 
+> **¿Vas a subir y procesar un dataset adicional después de ya haber
+> corrido el pipeline una vez?** No hace falta ningún paso extra en
+> Athena: solo vuelve a ejecutar el Gold crawler
+> (`<project_name>-gold-crawler`) como se indicó arriba — el crawler
+> detecta y registra automáticamente las particiones nuevas de
+> `gold/orders/` en el catálogo. Repite este paso 4 completo (Silver y
+> Gold) cada vez que corras el Glue Job de nuevo.
+
 ### Verificar las tablas en el catálogo
 
 1. En el menú lateral de Glue, bajo **Data Catalog**, elige **Databases**.
@@ -219,8 +227,5 @@ comando de terminal:
 - [despliegue_infra_terraform.md](despliegue_infra_terraform.md) —
   despliegue de la infraestructura (requiere Terraform/terminal, es la
   única excepción a "solo consola").
-- [prueba_manual_pipeline.md](prueba_manual_pipeline.md) — la misma
-  prueba, con las alternativas de AWS CLI para quien prefiera repetir el
-  proceso rápido desde terminal.
 - [sesion_04_laboratorio_challenges.md](sesion_04_laboratorio_challenges.md)
   — enunciado completo del laboratorio.

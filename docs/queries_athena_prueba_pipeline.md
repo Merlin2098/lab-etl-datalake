@@ -289,11 +289,9 @@ Ver la sección de troubleshooting en
 
 ## Referencias
 
-- [prueba_manual_pipeline.md](prueba_manual_pipeline.md) — guía completa
-  del pipeline (consola + CLI), estas queries son la sección 4 de esa
-  guía, ampliada.
-- [prueba_manual_consola_aws.md](prueba_manual_consola_aws.md) — la misma
-  prueba, solo con clics en consola, sin comandos de terminal.
+- [prueba_manual_consola_aws.md](prueba_manual_consola_aws.md) — guía
+  completa del pipeline por consola; estas queries son la sección 5 de
+  esa guía, ampliada.
 - [src/queries/](../src/queries/) — versión resumida de estas queries
   como archivos `.sql` sueltos (`01_bronze.sql`, `02_silver.sql`,
   `03_gold.sql`).

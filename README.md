@@ -79,15 +79,10 @@ Sigue este orden — cada paso te lleva a una guía más detallada:
    que aparecieron construyendo este stack contra AWS real (no solo la
    teoría) y cómo se diagnosticaron — útil para cuando a ti te pase algo
    parecido.
-3. **Ejecuta el pipeline y valida el resultado.** Tienes dos guías según
-   tu preferencia:
-   - [docs/prueba_manual_consola_aws.md](docs/prueba_manual_consola_aws.md)
-     — **recomendada si es tu primera vez**: todo por clics en la consola
-     web de AWS, sin ningún comando de terminal. Ideal para ver
-     visualmente qué hace cada servicio.
-   - [docs/prueba_manual_pipeline.md](docs/prueba_manual_pipeline.md) —
-     los mismos pasos, con la alternativa de AWS CLI para repetirlos
-     rápido una vez que ya entiendes el flujo.
+3. **Ejecuta el pipeline y valida el resultado**:
+   [docs/prueba_manual_consola_aws.md](docs/prueba_manual_consola_aws.md)
+   — todo por clics en la consola web de AWS, sin ningún comando de
+   terminal. Ideal para ver visualmente qué hace cada servicio.
 4. **Vuelve al enunciado del laboratorio** y responde los challenges
    (Parte 16 en adelante) contra tu propio despliegue — el objetivo no es
    que "funcione", es que puedas explicar por qué existe cada componente.
@@ -150,10 +145,7 @@ pipeline:
 
 **Manual, paso a paso** (la forma en que aprendes qué hace cada
 servicio): sigue
-[docs/prueba_manual_consola_aws.md](docs/prueba_manual_consola_aws.md)
-(solo consola) o
-[docs/prueba_manual_pipeline.md](docs/prueba_manual_pipeline.md)
-(consola + CLI).
+[docs/prueba_manual_consola_aws.md](docs/prueba_manual_consola_aws.md).
 
 **Automatizado** (rápido, pero no reemplaza entender cada paso):
 
@@ -172,8 +164,8 @@ Athena). Tarda entre 4 y 6 minutos.
 
 **¿Vas a subir un dataset adicional después de ya haber corrido el
 pipeline una vez?** Athena no verá las particiones nuevas de
-`gold_orders` hasta reparar el catálogo — ver
-[docs/reparar_particiones_athena.md](docs/reparar_particiones_athena.md).
+`gold_orders` hasta que vuelvas a correr los Glue Crawlers — ver
+[docs/prueba_manual_consola_aws.md, sección 4](docs/prueba_manual_consola_aws.md#4-ejecutar-los-crawlers-silver-y-luego-gold).
 
 ## Convenciones del proyecto
 

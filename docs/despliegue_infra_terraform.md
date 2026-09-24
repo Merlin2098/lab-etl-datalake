@@ -203,14 +203,12 @@ Outputs relevantes para explorar por consola (sección 7 del lab):
 ## 8. Subir el dataset y ejecutar el ETL (pasos manuales, fuera de Terraform)
 
 Ver la guía detallada en
-[prueba_manual_pipeline.md](prueba_manual_pipeline.md) (consola + AWS
-CLI) o en
 [prueba_manual_consola_aws.md](prueba_manual_consola_aws.md) (solo
 consola, sin ningún comando de terminal). Resumen:
 
 1. Sube `data/orders.csv` directo a
-   `s3://<data_lake_bucket_name>/bronze/orders/` (vía consola o
-   `aws s3 cp`) — sin subcarpeta adicional.
+   `s3://<data_lake_bucket_name>/bronze/orders/` vía consola — sin
+   subcarpeta adicional.
 2. En la consola de AWS Glue, ejecuta el Job indicado en
    `glue_job_name`.
 3. Verifica que el Job finalizó correctamente y revisa los logs en
