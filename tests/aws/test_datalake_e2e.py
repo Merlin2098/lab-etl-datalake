@@ -143,10 +143,8 @@ def test_pipeline_end_to_end(stack: StackOutputs) -> None:
     glue = get_client("glue")
     athena = get_client("athena")
 
-    # --- Step 1: upload the real dataset to Bronze under a source partition ---
-    # Hive-style source=<name>/ lets multiple origins with the same orders
-    # schema share this one pipeline (see src/glue/transform.py docstring).
-    bronze_key = "bronze/orders/source=lab/orders.csv"
+    # --- Step 1: upload the real dataset directly to Bronze ---
+    bronze_key = "bronze/orders/orders.csv"
     s3.upload_file(str(ORDERS_CSV), stack.data_lake_bucket_name, bronze_key)
 
     uploaded = s3.head_object(Bucket=stack.data_lake_bucket_name, Key=bronze_key)
@@ -171,9 +169,6 @@ def test_pipeline_end_to_end(stack: StackOutputs) -> None:
     )
     assert gold_objects.get("KeyCount", 0) > 0, "Glue job produced no Gold output"
     gold_keys = [obj["Key"] for obj in gold_objects["Contents"]]
-    assert any("source=lab" in key for key in gold_keys), (
-        "Gold output is not partitioned by source as expected"
-    )
     assert any("year=" in key for key in gold_keys), (
         "Gold output is not partitioned by year as expected"
     )

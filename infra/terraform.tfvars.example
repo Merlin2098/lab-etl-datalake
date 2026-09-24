@@ -1,5 +1,4 @@
-project_name = "data-platform"
-environment  = "dev"
+project_name = "lab-etl"
 aws_region   = "us-east-1"
 owner        = "data-engineering"
 
@@ -9,5 +8,5 @@ glue_number_of_workers         = 2
 glue_job_timeout_minutes       = 15
 
 tags = {
-  CostCenter = "data-platform"
+  CostCenter = "lab-etl"
 }

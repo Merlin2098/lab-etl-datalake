@@ -23,29 +23,9 @@ equipo de datos:
 La arquitectura que resuelve esto se llama **medallion**: tres capas
 llamadas Bronze, Silver y Gold.
 
-```text
-data/orders.csv (o cualquier CSV con el mismo esquema)
-        │
-        ▼ (subida manual a S3)
-Bronze  s3://<bucket>/bronze/orders/source=<origen>/
-        │
-        ▼
-   AWS Glue Job (PySpark, src/glue/transform.py)
-        │
-   ┌────┴────┐
-   ▼         ▼
-Silver      Gold
-(parquet,   (parquet, particionado
-particionado source/year/month/day)
-por source)
-   │         │
-   └────┬────┘
-        ▼
-  Glue Crawlers (uno por capa) → Glue Data Catalog
-        │
-        ▼
-     Athena (queries en src/queries/)
-```
+![Diagrama de arquitectura: infraestructura Terraform y flujo de datos medallion Bronze/Silver/Gold](docs/assets/architecture.png)
+
+*Fuente editable del diagrama: [docs/assets/architecture.dot](docs/assets/architecture.dot).*
 
 | Capa | Qué contiene | Por qué existe |
 |---|---|---|
@@ -116,7 +96,7 @@ Sigue este orden — cada paso te lleva a una guía más detallada:
 
 | Ruta | Qué es |
 |---|---|
-| `infra/` | Terraform: bucket S3 del data lake, Glue (database, job, crawlers), Athena (workgroup), rol IAM, CloudWatch Logs. |
+| `infra/` | Terraform, modularizado por servicio en `infra/modules/`: `s3_datalake` (bucket + prefijos bronze/silver/gold/temp), `iam` (rol de ejecución, CloudWatch Logs, budget), `glue` (database, job, crawlers), `athena` (workgroup). La raíz de `infra/` solo orquesta los módulos. |
 | `src/glue/transform.py` | El script PySpark que ejecuta el Glue Job: limpia y deduplica Bronze → Silver, agrega Silver → Gold. Es el corazón del ETL — vale la pena leerlo completo. |
 | `src/queries/` | Queries SQL de referencia para pegar en Athena (`01_bronze.sql`, `02_silver.sql`, `03_gold.sql`). |
 | `data/orders.csv` | Dataset sintético de ejemplo (pedidos), con duplicados y valores inválidos a propósito — así ves que la limpieza de Silver realmente hace algo. |
@@ -163,32 +143,6 @@ concreto:
 uv run python scripts/generate_orders_dataset.py --rows 100 --seed 7 --out data/orders_grande.csv
 ```
 
-## Múltiples orígenes con el mismo esquema
-
-Imagina que además de tu tienda tienes otro canal de ventas — mismos
-campos (`order_id`, `amount`, `city`...), pero otra fuente de datos. Este
-pipeline soporta eso mediante una partición Hive-style `source=<nombre>/`
-dentro de Bronze:
-
-```text
-bronze/orders/source=tienda_a/orders.csv
-bronze/orders/source=tienda_b/orders.csv
-```
-
-El mismo Glue Job procesa ambos orígenes en una sola corrida; `source`
-queda disponible como columna en Silver y como partición en Gold (útil
-para filtrar después: `WHERE source = 'tienda_a'`). Si subes el CSV
-directo a `bronze/orders/orders.csv`, sin carpeta `source=`, el pipeline
-también funciona — asigna `source = "default"` automáticamente, así que
-el flujo simple de un solo origen nunca se rompe.
-
-**Un dataset con columnas completamente distintas** (por ejemplo
-`customers` en vez de otra fuente de `orders`) **no encaja en este
-mecanismo** — necesitaría su propio script PySpark y su propio Glue Job,
-porque una partición no cambia el esquema de columnas, solo segmenta
-datos que ya comparten la misma forma. Ver el docstring de
-[src/glue/transform.py](src/glue/transform.py) para el detalle técnico.
-
 ## Probar que todo funciona
 
 Después de desplegar la infraestructura, tienes dos formas de validar el
@@ -216,10 +170,15 @@ correctamente y que Gold reconcilia con Silver. No es un smoke test — es
 una ejecución real con costo real (Glue DPU-hours, datos escaneados por
 Athena). Tarda entre 4 y 6 minutos.
 
+**¿Vas a subir un dataset adicional después de ya haber corrido el
+pipeline una vez?** Athena no verá las particiones nuevas de
+`gold_orders` hasta reparar el catálogo — ver
+[docs/reparar_particiones_athena.md](docs/reparar_particiones_athena.md).
+
 ## Convenciones del proyecto
 
 Este repo sigue el contrato definido en [AGENTS.md](AGENTS.md): Terraform
-separado por servicio dentro de `infra/`, SQL separado de Python,
+modularizado por servicio dentro de `infra/modules/`, SQL separado de Python,
 configuración sobre valores hardcodeados, y aprobación explícita antes de
 cualquier `terraform apply`/`destroy` real (nunca lo ejecutes sin
 entender qué va a crear o destruir). Para dependencias Python se usa

@@ -32,45 +32,35 @@ terminal**, usa
   cd ..
   ```
   Los pasos siguientes usan estos nombres (ejemplo real de un despliegue
-  con `project_name=data-platform`, `environment=dev`):
-  - `data_lake_bucket_name` → `data-platform-dev-<account-id>-datalake`
-  - `glue_job_name` → `data-platform-dev-orders-medallion`
-  - `glue_silver_crawler_name` → `data-platform-dev-silver-crawler`
-  - `glue_gold_crawler_name` → `data-platform-dev-gold-crawler`
-  - `glue_database_name` → `data_platform_dev_datalake_db`
-  - `athena_workgroup_name` → `data-platform-dev-datalake`
+  con `project_name=lab-etl`):
+  - `data_lake_bucket_name` → `lab-etl-<account-id>-datalake`
+  - `glue_job_name` → `lab-etl-orders`
+  - `glue_silver_crawler_name` → `lab-etl-silver-crawler`
+  - `glue_gold_crawler_name` → `lab-etl-gold-crawler`
+  - `glue_database_name` → `lab_etl_datalake_db`
+  - `athena_workgroup_name` → `lab-etl-datalake`
 
 ## 1. Subir el dataset a Bronze
 
-El pipeline soporta múltiples orígenes con el **mismo esquema** de
-columnas (ej. distintas tiendas, canales o regiones) mediante una
-partición Hive-style `source=<nombre>/` bajo `bronze/orders/` — no un
-Glue Job por origen. Un dataset con columnas distintas (otra entidad de
-negocio, no otro origen del mismo `orders`) sí necesitaría su propio
-script/Job; eso está fuera de este mecanismo.
+El dataset se carga directo dentro de `bronze/orders/`, sin ninguna
+subcarpeta adicional. Un dataset con columnas distintas (otra entidad de
+negocio, no otra corrida del mismo `orders`) necesita su propio
+script/Job, no este mismo pipeline.
 
 ### Consola
 
 1. Abre S3 → el bucket de `data_lake_bucket_name`.
-2. Navega/crea el prefijo `bronze/orders/source=<nombre-origen>/` (por
-   ejemplo `bronze/orders/source=lab/`).
+2. Navega al prefijo `bronze/orders/`.
 3. Sube el CSV dentro de esa carpeta.
 
 ### CLI
 
 ```bash
 BUCKET=$(cd infra && terraform output -raw data_lake_bucket_name)
-aws s3 cp data/orders.csv "s3://$BUCKET/bronze/orders/source=lab/orders.csv"
-
-# Un segundo origen con el mismo esquema, en paralelo:
-# aws s3 cp otro_origen.csv "s3://$BUCKET/bronze/orders/source=otra-tienda/orders.csv"
+aws s3 cp data/orders.csv "s3://$BUCKET/bronze/orders/orders.csv"
 ```
 
-El Glue Job lee todo `bronze/orders/` de una sola pasada: si hay varias
-carpetas `source=.../`, todas se procesan juntas y `source` queda
-disponible como columna normal en Silver y como partición en Gold. Si
-subes el CSV directo a `bronze/orders/orders.csv` (sin `source=`), el job
-sigue funcionando — asigna `source = "default"` automáticamente.
+El Glue Job lee todo `bronze/orders/` de una sola pasada.
 
 ### Generar un dataset distinto en cada corrida
 
@@ -90,22 +80,21 @@ OUT_FILE=$(uv run python scripts/generate_orders_dataset.py | sed -n 's/.* to //
 echo "Generado: $OUT_FILE"
 
 FILE_NAME=$(basename "$OUT_FILE")          # orders-<timestamp>.csv
-RUN_ID=$(basename "$OUT_FILE" .csv | sed 's/^orders-//')  # <timestamp>
 
-aws s3 cp "$OUT_FILE" "s3://$BUCKET/bronze/orders/source=run-${RUN_ID}/${FILE_NAME}"
+aws s3 cp "$OUT_FILE" "s3://$BUCKET/bronze/orders/${FILE_NAME}"
 ```
 
 Cada archivo se guarda en `data/` junto al dataset base — `data/` está en
 `.gitignore`, así que estos archivos no se versionan, pero quedan en
 disco para volver a subirlos sin regenerarlos. El nombre en S3 lleva el
-mismo timestamp que el archivo local — no `orders.csv` fijo — **incluso
-dentro de su propia carpeta `source=`**: si alguna vez subes más de un
-archivo al mismo `source=` (ver el otro caso más abajo), un nombre fijo
-se sobrescribiría silenciosamente en cada corrida. El timestamp tiene
-resolución de microsegundos precisamente para que dos corridas separadas
-por menos de un segundo (típico al re-ejecutar rápido) nunca colisionen;
-si de todos modos el archivo de salida ya existiera, el script falla con
-`FileExistsError` en vez de sobrescribirlo silenciosamente.
+mismo timestamp que el archivo local — no `orders.csv` fijo: el Glue Job
+lee todos los archivos bajo `bronze/orders/` en una sola pasada, así que
+un nombre fijo se sobrescribiría silenciosamente en cada corrida. El
+timestamp tiene resolución de microsegundos precisamente para que dos
+corridas separadas por menos de un segundo (típico al re-ejecutar rápido)
+nunca colisionen; si de todos modos el archivo de salida ya existiera, el
+script falla con `FileExistsError` en vez de sobrescribirlo
+silenciosamente.
 
 `tests/aws/test_datalake_e2e.py` depende de un `data/orders.csv` fijo y
 determinista (seed 42, duplicados siempre en `ORD-0001`/`ORD-0007`). Para
@@ -116,15 +105,12 @@ default:
 uv run python scripts/generate_orders_dataset.py --fixed
 ```
 
-Cada corrida (sin `--fixed`) queda como un `source` independiente y
-distinguible después en Athena (`WHERE source = 'run-20260923...'`), sin
-pisar datos de corridas anteriores. Si en cambio quieres simular llegada
-incremental de datos **del mismo origen** (no un origen nuevo cada vez),
-usa siempre el mismo `source=` pero sigue generando sin `--fixed` para
-que cada archivo tenga un nombre distinto — el Glue Job procesa todos los
-archivos bajo un mismo `source=` juntos en una sola pasada, como si
-fueran más filas del mismo origen, siempre que cada archivo tenga un
-nombre único.
+> **¿Vas a subir este dataset adicional después de ya haber corrido el
+> pipeline al menos una vez?** El Glue Job creará particiones nuevas en
+> `gold/orders/` (por fecha de procesamiento) que Athena no verá hasta que
+> el catálogo se actualice. Sigue el resto de esta guía normalmente y,
+> antes de consultar en la sección 4, revisa
+> [reparar_particiones_athena.md](reparar_particiones_athena.md).
 
 ## 2. Ejecutar el Glue Job
 
@@ -244,18 +230,14 @@ aws athena get-query-results --query-execution-id "$QUERY_ID"
   <= 0`.
 - `gold_orders` reconcilia: la suma de `orders` por ciudad debe igualar el
   conteo total de `silver_orders`.
-- `gold_orders` está particionado también por `source` (además de
-  `year/month/day`): `SELECT source, ... FROM gold_orders GROUP BY
-  source` debe mostrar cada origen subido bajo su propia carpeta
-  `source=<nombre>/` en Bronze.
-- El filtro por partición (`WHERE source = 'lab' AND year = '2026' AND
-  month = '9'`, con **comillas** — ver nota abajo) trae menos datos que
+- El filtro por partición (`WHERE year = '2026' AND month = '9'`, con
+  **comillas** — ver nota abajo) trae menos datos que
   `SELECT * FROM gold_orders` sin filtro: eso es partition pruning.
 
 ### Nota: las particiones son `string`, no `int`
 
-El crawler cataloga las columnas de partición Hive-style (`source`,
-`year`, `month`, `day`) como **`string`** por defecto. Si filtras con
+El crawler cataloga las columnas de partición Hive-style (`year`,
+`month`, `day`) como **`string`** por defecto. Si filtras con
 `WHERE year = 2026` (sin comillas) obtendrás:
 
 ```
@@ -264,6 +246,16 @@ TYPE_MISMATCH: Cannot apply operator: varchar = integer
 
 Usa siempre `WHERE year = '2026'` con comillas, tal como está en
 `src/queries/03_gold.sql`.
+
+### Si corriste el pipeline más de una vez (particiones nuevas)
+
+Cada corrida adicional del Glue Job agrega una partición nueva a
+`gold/orders/` (fecha de procesamiento distinta). Si después de una
+segunda corrida una query filtrando por esa fecha nueva devuelve cero
+filas — aunque el crawler ya se ejecutó antes —, repite el Gold crawler o
+usa `MSCK REPAIR TABLE gold_orders` desde Athena; ver
+[reparar_particiones_athena.md](reparar_particiones_athena.md) para el
+comando exacto (CLI y consola).
 
 ## 5. Prueba automatizada equivalente
 
@@ -282,8 +274,8 @@ uv run python -m pytest tests/aws/test_datalake_e2e.py -m cloud -v -s
 
 Tarda ~4-6 minutos y tiene costo real (Glue DPU-hours, datos escaneados
 por Athena). Útil para confirmar rápido que un cambio en
-`src/glue/transform.py` o en `infra/glue.tf` no rompió el pipeline, sin
-repetir los pasos manuales de consola.
+`src/glue/transform.py` o en `infra/modules/glue/main.tf` no rompió el
+pipeline, sin repetir los pasos manuales de consola.
 
 ## Nota sobre el disparo automático (fuera de alcance de este lab)
 

@@ -1,13 +1,7 @@
 variable "project_name" {
   description = "Project name used in AWS resource naming."
   type        = string
-  default     = "data-platform"
-}
-
-variable "environment" {
-  description = "Deployment environment."
-  type        = string
-  default     = "dev"
+  default     = "lab-etl"
 }
 
 variable "owner" {

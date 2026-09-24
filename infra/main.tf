@@ -1,104 +1,66 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  name_prefix = lower(replace("${var.project_name}-${var.environment}", "_", "-"))
+  name_prefix = lower(replace(var.project_name, "_", "-"))
   common_tags = merge(
     var.tags,
     {
-      Project     = var.project_name
-      Environment = var.environment
-      Owner       = var.owner
-      ManagedBy   = "Terraform"
-      CostCenter  = var.cost_center
+      Project    = var.project_name
+      Owner      = var.owner
+      ManagedBy  = "Terraform"
+      CostCenter = var.cost_center
     }
   )
 }
 
-data "aws_iam_policy_document" "glue_assume_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
+module "iam" {
+  source = "./modules/iam"
 
-    principals {
-      type        = "Service"
-      identifiers = ["glue.amazonaws.com"]
-    }
-  }
+  name_prefix             = local.name_prefix
+  execution_role_name     = var.execution_role_name
+  log_retention_days      = var.log_retention_days
+  enable_budget_guardrail = var.enable_budget_guardrail
+  budget_limit_usd        = var.budget_limit_usd
+  budget_alert_email      = var.budget_alert_email
+  project_name            = var.project_name
+  tags                    = local.common_tags
 }
 
-resource "aws_iam_role" "data_job_execution" {
-  name               = "${local.name_prefix}-${var.execution_role_name}"
-  assume_role_policy = data.aws_iam_policy_document.glue_assume_role.json
-  tags               = local.common_tags
+module "s3_datalake" {
+  source = "./modules/s3_datalake"
+
+  name_prefix                  = local.name_prefix
+  account_id                   = data.aws_caller_identity.current.account_id
+  bucket_suffix                = var.data_lake_bucket_suffix
+  force_destroy                = var.data_lake_bucket_force_destroy
+  glue_script_path             = "${path.module}/../src/glue/transform.py"
+  data_job_execution_role_name = module.iam.execution_role_name
+  tags                         = local.common_tags
 }
 
-resource "aws_iam_role_policy_attachment" "glue_service_role" {
-  role       = aws_iam_role.data_job_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
+module "glue" {
+  source = "./modules/glue"
+
+  name_prefix           = local.name_prefix
+  execution_role_arn    = module.iam.execution_role_arn
+  data_lake_bucket_name = module.s3_datalake.bucket_name
+  glue_script_s3_key    = module.s3_datalake.glue_script_s3_key
+  bronze_prefix         = module.s3_datalake.bronze_prefix
+  silver_prefix         = module.s3_datalake.silver_prefix
+  gold_prefix           = module.s3_datalake.gold_prefix
+  temp_prefix           = module.s3_datalake.temp_prefix
+  log_group_name        = module.iam.log_group_name
+  worker_type           = var.glue_worker_type
+  number_of_workers     = var.glue_number_of_workers
+  job_timeout_minutes   = var.glue_job_timeout_minutes
+  tags                  = local.common_tags
 }
 
-resource "aws_cloudwatch_log_group" "data_jobs" {
-  name              = "/aws/data-jobs/${local.name_prefix}"
-  retention_in_days = var.log_retention_days
-  tags              = local.common_tags
-}
+module "athena" {
+  source = "./modules/athena"
 
-data "aws_iam_policy_document" "cloudwatch_logs_access" {
-  statement {
-    actions = [
-      "logs:CreateLogStream",
-      "logs:PutLogEvents",
-      "logs:DescribeLogStreams",
-    ]
-    resources = ["${aws_cloudwatch_log_group.data_jobs.arn}:*"]
-  }
-}
-
-resource "aws_iam_role_policy" "cloudwatch_logs_access" {
-  name   = "${local.name_prefix}-cloudwatch-logs-access"
-  role   = aws_iam_role.data_job_execution.id
-  policy = data.aws_iam_policy_document.cloudwatch_logs_access.json
-}
-
-resource "aws_sns_topic" "budget_alerts" {
-  count = var.enable_budget_guardrail && var.budget_alert_email != "" ? 1 : 0
-  name  = "${local.name_prefix}-budget-alerts"
-  tags  = local.common_tags
-}
-
-resource "aws_sns_topic_subscription" "budget_email" {
-  count     = var.enable_budget_guardrail && var.budget_alert_email != "" ? 1 : 0
-  topic_arn = aws_sns_topic.budget_alerts[0].arn
-  protocol  = "email"
-  endpoint  = var.budget_alert_email
-}
-
-resource "aws_budgets_budget" "monthly" {
-  count             = var.enable_budget_guardrail ? 1 : 0
-  name              = "${local.name_prefix}-monthly-budget"
-  budget_type       = "COST"
-  limit_amount      = tostring(var.budget_limit_usd)
-  limit_unit        = "USD"
-  time_unit         = "MONTHLY"
-  time_period_start = "2024-01-01_00:00"
-
-  cost_filter {
-    name   = "TagKeyValue"
-    values = ["user:Project$${var.project_name}"]
-  }
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 80
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "ACTUAL"
-    subscriber_email_addresses = var.budget_alert_email != "" ? [var.budget_alert_email] : []
-  }
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 100
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "FORECASTED"
-    subscriber_email_addresses = var.budget_alert_email != "" ? [var.budget_alert_email] : []
-  }
+  name_prefix           = local.name_prefix
+  data_lake_bucket_name = module.s3_datalake.bucket_name
+  athena_results_prefix = module.s3_datalake.athena_results_prefix
+  tags                  = local.common_tags
 }

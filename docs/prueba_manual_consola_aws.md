@@ -14,16 +14,16 @@ sí usa Terraform desde terminal, es la única excepción, ya que
 Para saber los nombres exactos de tus recursos (bucket, Job, Crawlers,
 etc.), pide a quien desplegó la infraestructura los valores de
 `terraform output`, o revisa el archivo `infra/terraform.tfvars` para
-identificar el prefijo (`project_name-environment`, ej.
-`data-platform-dev`) — con eso puedes ubicar cada recurso por nombre en
+identificar el prefijo (`project_name`, ej.
+`lab-etl`) — con eso puedes ubicar cada recurso por nombre en
 la consola sin ejecutar ningún comando.
 
 ## 1. Ubicar el bucket del data lake
 
 1. Entra a la consola de AWS y busca el servicio **S3**.
 2. En la lista de buckets, busca uno con el patrón
-   `<project_name>-<environment>-<account-id>-<data_lake_bucket_suffix>`
-   (por ejemplo `data-platform-dev-123456789012-datalake`).
+   `<project_name>-<account-id>-<data_lake_bucket_suffix>`
+   (por ejemplo `lab-etl-123456789012-datalake`).
 3. Ábrelo. Verás (o se crearán al ejecutar el pipeline) los siguientes
    prefijos (carpetas):
    - `bronze/orders/` — datos crudos.
@@ -34,40 +34,23 @@ la consola sin ejecutar ningún comando.
 
 ## 2. Subir el dataset a Bronze
 
-El pipeline soporta múltiples orígenes con el **mismo esquema** de
-columnas (`order_id, customer_id, order_date, status, amount, city,
-carrier`) mediante una carpeta `source=<nombre>/` dentro de
-`bronze/orders/`. Si no tienes un dataset a mano, usa el archivo
+El dataset se sube directo dentro de `bronze/orders/`, sin ninguna
+subcarpeta adicional. Si no tienes un dataset a mano, usa el archivo
 `data/orders.csv` de este repositorio (descárgalo a tu computadora si
 trabajas solo desde el navegador).
 
 1. Dentro del bucket, entra a la carpeta `bronze/orders/`.
-2. Haz clic en **Create folder** (Crear carpeta).
-3. Nombra la carpeta exactamente `source=lab` (sin barra final, S3 la
-   agrega automáticamente al confirmar). Puedes usar cualquier otro
-   nombre de origen (`source=tienda_a`, `source=canal_web`, etc.) — cada
-   nombre distinto se trata como una fuente de datos independiente.
-4. Entra a la carpeta recién creada (`bronze/orders/source=lab/`).
-5. Haz clic en **Upload** (Cargar).
-6. Arrastra o selecciona tu archivo CSV (ej. `orders.csv`).
-7. Haz clic en **Upload** para confirmar la subida.
-8. Verifica que el archivo aparece listado dentro de
-   `bronze/orders/source=lab/`.
-
-**Nota:** si subes el CSV directamente a `bronze/orders/` (sin crear la
-carpeta `source=`), el pipeline también funciona — asigna
-automáticamente `source = "default"` a esos datos al procesarlos.
-
-Para simular múltiples orígenes, repite este paso creando otra carpeta
-(`source=otro-origen/`) y subiendo otro archivo con el mismo esquema de
-columnas.
+2. Haz clic en **Upload** (Cargar).
+3. Arrastra o selecciona tu archivo CSV (ej. `orders.csv`).
+4. Haz clic en **Upload** para confirmar la subida.
+5. Verifica que el archivo aparece listado dentro de `bronze/orders/`.
 
 ## 3. Ejecutar el Glue Job
 
 1. Busca el servicio **AWS Glue** en la consola.
 2. En el menú lateral, bajo **Data Integration and ETL**, elige **Jobs**.
-3. Busca el Job con el patrón `<project_name>-<environment>-orders-medallion`
-   (ej. `data-platform-dev-orders-medallion`) y haz clic en su nombre.
+3. Busca el Job con el patrón `<project_name>-orders`
+   (ej. `lab-etl-orders`) y haz clic en su nombre.
 4. Arriba a la derecha, haz clic en **Run** (Ejecutar).
 5. Ve a la pestaña **Runs** (Ejecuciones) del Job.
 6. Observa la fila más reciente: el estado pasa de **Running** a
@@ -83,9 +66,9 @@ columnas.
 2. Entra a `silver/orders/`. Debe haber uno o más archivos con extensión
    `.parquet`.
 3. Entra a `gold/orders/`. En vez de archivos sueltos, verás carpetas
-   anidadas con el patrón `source=.../year=.../month=.../day=.../`, y
-   dentro de la última carpeta, el archivo `.parquet` correspondiente.
-   Esa estructura de carpetas es la partición del dataset Gold.
+   anidadas con el patrón `year=.../month=.../day=.../`, y dentro de la
+   última carpeta, el archivo `.parquet` correspondiente. Esa estructura
+   de carpetas es la partición del dataset Gold.
 
 ## 4. Ejecutar los Crawlers (Silver y luego Gold)
 
@@ -96,19 +79,19 @@ Gold — para que las tablas resultantes en el catálogo se llamen siempre
 1. En la consola de **AWS Glue**, en el menú lateral, bajo **Data
    Catalog**, elige **Crawlers**.
 2. Busca el crawler con el patrón
-   `<project_name>-<environment>-silver-crawler` (ej.
-   `data-platform-dev-silver-crawler`).
+   `<project_name>-silver-crawler` (ej.
+   `lab-etl-silver-crawler`).
 3. Selecciona su casilla y haz clic en **Run** (Ejecutar).
 4. Espera a que la columna **Status** vuelva a **Ready** y la columna
    **Last run** muestre **Succeeded**. Normalmente tarda 1-2 minutos.
 5. Repite los pasos 2-4 con el crawler
-   `<project_name>-<environment>-gold-crawler`.
+   `<project_name>-gold-crawler`.
 
 ### Verificar las tablas en el catálogo
 
 1. En el menú lateral de Glue, bajo **Data Catalog**, elige **Databases**.
-2. Abre la base de datos con el patrón `<project_name>_<environment>_datalake_db`
-   (ej. `data_platform_dev_datalake_db`) — con guiones bajos, no guiones.
+2. Abre la base de datos con el patrón `<project_name>_datalake_db`
+   (ej. `lab_etl_datalake_db`) — con guiones bajos, no guiones.
 3. Haz clic en **Tables** (o en el contador de tablas de esa database).
 4. Debes ver exactamente dos tablas: `silver_orders` y `gold_orders`.
    - Si en vez de eso ves una tabla llamada `orders` o con un sufijo
@@ -116,7 +99,7 @@ Gold — para que las tablas resultantes en el catálogo se llamen siempre
      antiguo de una sola pasada — vuelve a correr los dos crawlers por
      separado como se indicó arriba.
 5. Haz clic en `gold_orders` y revisa la sección **Partitions** — debe
-   listar particiones con el patrón `source=.../year=.../month=.../day=...`.
+   listar particiones con el patrón `year=.../month=.../day=...`.
 
 ## 5. Consultar con Athena
 
@@ -124,14 +107,14 @@ Gold — para que las tablas resultantes en el catálogo se llamen siempre
 2. Si es la primera vez que usas Athena en la cuenta, puede pedirte
    configurar una ubicación de resultados de consulta — esto ya está
    preconfigurado por Terraform (workgroup con el patrón
-   `<project_name>-<environment>-datalake`), así que solo debes
+   `<project_name>-datalake`), así que solo debes
    seleccionarlo (ver siguiente paso).
 3. Entra a **Query editor** (Editor de consultas).
 4. En el panel superior derecho, en el selector **Workgroup**, elige el
-   workgroup con el patrón `<project_name>-<environment>-datalake`.
+   workgroup con el patrón `<project_name>-datalake`.
 5. En el panel izquierdo:
    - **Data source**: `AwsDataCatalog`.
-   - **Database**: la base `<project_name>_<environment>_datalake_db`.
+   - **Database**: la base `<project_name>_datalake_db`.
 6. En el editor de consultas (panel central), escribe y ejecuta (botón
    **Run** o **Ejecutar**) cada una de las siguientes consultas, una a la
    vez:
@@ -160,33 +143,31 @@ HAVING COUNT(*) > 1;
 Este resultado **debe salir vacío** (0 filas). Si aparece alguna fila,
 algo falló en la deduplicación.
 
-### Consulta 3 — Agregación por origen y ciudad en Gold
+### Consulta 3 — Agregación por ciudad en Gold
 
 ```sql
-SELECT source, city, SUM(orders) AS orders, SUM(revenue) AS revenue
+SELECT city, SUM(orders) AS orders, SUM(revenue) AS revenue
 FROM gold_orders
-GROUP BY source, city
+GROUP BY city
 ORDER BY revenue DESC;
 ```
 
-Debes ver una fila por combinación de `source` (la carpeta que creaste en
-el paso 2) y `city`, con totales de pedidos e ingresos.
+Debes ver una fila por `city`, con totales de pedidos e ingresos.
 
 ### Consulta 4 — Partition pruning (filtrar por partición)
 
 ```sql
 SELECT city, revenue
 FROM gold_orders
-WHERE source = 'lab'
-  AND year = '2026'
+WHERE year = '2026'
   AND month = '9'
   AND day = '23';
 ```
 
-**Importante:** `source`, `year`, `month` y `day` son columnas de tipo
-texto (`string`), aunque parezcan números — deben ir entre comillas
-simples. Si las escribes sin comillas (`WHERE year = 2026`), Athena
-responde con un error de tipo:
+**Importante:** `year`, `month` y `day` son columnas de tipo texto
+(`string`), aunque parezcan números — deben ir entre comillas simples. Si
+las escribes sin comillas (`WHERE year = 2026`), Athena responde con un
+error de tipo:
 
 ```
 TYPE_MISMATCH: Cannot apply operator: varchar = integer
@@ -215,7 +196,7 @@ un valor menor. Eso es *partition pruning* en acción.
 3. Haz clic en **CloudWatch logs** (o el enlace equivalente al log
    stream).
 4. Esto te lleva a **CloudWatch** → **Log groups**, dentro del grupo con
-   el patrón `/aws/data-jobs/<project_name>-<environment>`.
+   el patrón `/aws/data-jobs/<project_name>`.
 5. Revisa el stream más reciente para ver el traceback completo de
    Python/Spark.
 
@@ -224,7 +205,7 @@ un valor menor. Eso es *partition pruning* en acción.
 Al terminar, deberías poder confirmar visualmente, sin usar ningún
 comando de terminal:
 
-- [ ] El CSV subido aparece en `bronze/orders/source=<nombre>/` (S3).
+- [ ] El CSV subido aparece en `bronze/orders/` (S3).
 - [ ] El Glue Job terminó en estado **Succeeded** (Glue → Jobs → Runs).
 - [ ] Existen archivos `.parquet` en `silver/orders/` y `gold/orders/`
       (S3), y `gold/orders/` tiene subcarpetas de partición.

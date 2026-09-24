@@ -1,0 +1,140 @@
+digraph architecture {
+  graph [rankdir=LR, fontname="Helvetica", fontsize=11, labelloc="t",
+         label="Lab ETL Datalake — Arquitectura (AWS + Terraform)", compound=true];
+  node  [fontname="Helvetica", fontsize=10, style="filled", shape="box"];
+  edge  [fontname="Helvetica", fontsize=9];
+
+  // ---------------------------------------------------------------
+  // Fuente de datos
+  // ---------------------------------------------------------------
+  subgraph cluster_source {
+    label = "Origen";
+    style = "dashed";
+    color = "gray50";
+
+    raw_data [label="Datos crudos\n(orders)", shape="note", fillcolor="#f5f5f5"];
+  }
+
+  // ---------------------------------------------------------------
+  // S3 Data Lake (modules/s3_datalake)
+  // ---------------------------------------------------------------
+  subgraph cluster_s3 {
+    label = "S3 Data Lake  (module: s3_datalake)";
+    style = "filled";
+    fillcolor = "#e8f0fe";
+    color = "#4285f4";
+
+    s3_bucket   [label="aws_s3_bucket\ndata_lake\n(SSE-S3, public access blocked)", fillcolor="#bbdefb"];
+    bronze      [label="bronze/orders/", shape="folder", fillcolor="#cd7f32", fontcolor="white"];
+    silver      [label="silver/orders/", shape="folder", fillcolor="#c0c0c0"];
+    gold        [label="gold/orders/", shape="folder", fillcolor="#ffd700"];
+    temp        [label="temp/", shape="folder", fillcolor="#eeeeee"];
+    scripts     [label="scripts/\ntransform.py", shape="folder", fillcolor="#e0e0e0"];
+    athena_res  [label="athena-results/", shape="folder", fillcolor="#e0e0e0"];
+
+    s3_bucket -> bronze;
+    s3_bucket -> silver;
+    s3_bucket -> gold;
+    s3_bucket -> temp;
+    s3_bucket -> scripts;
+    s3_bucket -> athena_res;
+  }
+
+  // ---------------------------------------------------------------
+  // IAM (modules/iam)
+  // ---------------------------------------------------------------
+  subgraph cluster_iam {
+    label = "IAM & Observabilidad  (module: iam)";
+    style = "filled";
+    fillcolor = "#fce8e6";
+    color = "#ea4335";
+
+    iam_role    [label="aws_iam_role\ndata_job_execution\n(glue.amazonaws.com)", fillcolor="#f6c7c2"];
+    log_group   [label="aws_cloudwatch_log_group\n/aws/data-jobs/*\n(retention_in_days)", fillcolor="#f6c7c2"];
+    budget      [label="aws_budgets_budget\n(opt-in:\nenable_budget_guardrail)", fillcolor="#f6c7c2", style="filled,dashed"];
+    sns_topic   [label="aws_sns_topic\nbudget_alerts", fillcolor="#f6c7c2", style="filled,dashed"];
+
+    iam_role -> log_group [label="permite escribir logs"];
+    budget -> sns_topic [label="notifica"];
+  }
+
+  // ---------------------------------------------------------------
+  // Glue (modules/glue)
+  // ---------------------------------------------------------------
+  subgraph cluster_glue {
+    label = "AWS Glue  (module: glue)";
+    style = "filled";
+    fillcolor = "#e6f4ea";
+    color = "#34a853";
+
+    glue_db      [label="aws_glue_catalog_database\ndatalake_db", fillcolor="#b7e1c2"];
+    glue_job     [label="aws_glue_job\norders_medallion\n(Bronze → Silver → Gold)", fillcolor="#b7e1c2"];
+    silver_crawler [label="aws_glue_crawler\nsilver_crawler\n(table_prefix: silver_)", fillcolor="#b7e1c2"];
+    gold_crawler   [label="aws_glue_crawler\ngold_crawler\n(table_prefix: gold_)", fillcolor="#b7e1c2"];
+
+    silver_crawler -> glue_db [label="registra tablas"];
+    gold_crawler -> glue_db [label="registra tablas"];
+  }
+
+  // ---------------------------------------------------------------
+  // Athena (modules/athena)
+  // ---------------------------------------------------------------
+  subgraph cluster_athena {
+    label = "Athena  (module: athena)";
+    style = "filled";
+    fillcolor = "#fef7e0";
+    color = "#fbbc04";
+
+    athena_wg [label="aws_athena_workgroup\ndatalake\n(SSE-S3 results)", fillcolor="#fde293"];
+  }
+
+  // ---------------------------------------------------------------
+  // Consumo / Analítica
+  // ---------------------------------------------------------------
+  subgraph cluster_consumers {
+    label = "Consumo";
+    style = "dashed";
+    color = "gray50";
+
+    sql_queries [label="src/queries/\n01_bronze.sql\n02_silver.sql\n03_gold.sql", shape="note", fillcolor="#f5f5f5"];
+    analyst     [label="Analista / BI", shape="oval", fillcolor="#f5f5f5"];
+  }
+
+  // ---------------------------------------------------------------
+  // Flujo de datos (medallion)
+  // ---------------------------------------------------------------
+  raw_data -> bronze [label="ingesta"];
+  scripts -> glue_job [label="script_location", style="dashed", color="gray40"];
+  glue_job -> bronze [label="lee", dir="back"];
+  bronze -> glue_job [label="lee"];
+  glue_job -> silver [label="escribe (transform.py)"];
+  glue_job -> gold [label="escribe (transform.py)"];
+  glue_job -> temp [label="--TempDir"];
+
+  silver_crawler -> silver [label="crawlea", dir="back"];
+  gold_crawler -> gold [label="crawlea", dir="back"];
+
+  iam_role -> glue_job [label="role_arn", style="dashed"];
+  s3_bucket -> iam_role [label="s3:Get/Put/Delete\n(policy en s3_datalake)", style="dashed", color="#ea4335", fontcolor="#ea4335"];
+
+  glue_db -> athena_wg [label="Glue Data Catalog", style="dashed"];
+  athena_wg -> athena_res [label="output_location"];
+  athena_wg -> sql_queries [label="ejecuta"];
+  sql_queries -> analyst [label="resultados"];
+
+  // ---------------------------------------------------------------
+  // Terraform root
+  // ---------------------------------------------------------------
+  subgraph cluster_root {
+    label = "infra/ (root module)";
+    style = "dotted";
+    color = "gray40";
+    root [label="main.tf\n(orquesta módulos:\niam → s3_datalake → glue → athena)",
+          shape="component", fillcolor="#eeeeee"];
+  }
+
+  root -> iam_role [style="invis"];
+  root -> s3_bucket [style="invis"];
+  root -> glue_job [style="invis"];
+  root -> athena_wg [style="invis"];
+}

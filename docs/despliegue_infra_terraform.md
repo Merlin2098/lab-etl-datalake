@@ -67,17 +67,16 @@ cp terraform.tfvars.example terraform.tfvars
 Revisa y ajusta `terraform.tfvars` según tu entorno. Variables relevantes
 para el data lake:
 
-| Variable                           | Default           | Descripción                                                                              |
-| ---------------------------------- | ----------------- | ----------------------------------------------------------------------------------------- |
-| `project_name`                   | `data-platform` | Prefijo usado en el nombre de todos los recursos.                                         |
-| `environment`                    | `dev`           | Ambiente de despliegue.                                                                   |
-| `aws_region`                     | `us-east-1`     | Región AWS.                                                                              |
-| `data_lake_bucket_suffix`        | `datalake`      | Sufijo del bucket S3 del data lake (Bronze/Silver/Gold).                                  |
-| `data_lake_bucket_force_destroy` | `true`          | Permite`terraform destroy` aunque el bucket tenga objetos. Mantener `true` en un lab. |
-| `glue_worker_type`               | `G.1X`          | Tipo de worker del Glue Job.                                                              |
-| `glue_number_of_workers`         | `2`             | Cantidad de workers del Glue Job.                                                         |
-| `glue_job_timeout_minutes`       | `15`            | Timeout del Glue Job.                                                                     |
-| `enable_budget_guardrail`        | `false`         | Crea un AWS Budget mensual + alerta SNS. Opcional para el lab.                            |
+| Variable                           | Default       | Descripción                                                                              |
+| ---------------------------------- | ------------- | ----------------------------------------------------------------------------------------- |
+| `project_name`                   | `lab-etl`   | Prefijo usado en el nombre de todos los recursos.                                         |
+| `aws_region`                     | `us-east-1` | Región AWS.                                                                              |
+| `data_lake_bucket_suffix`        | `datalake`  | Sufijo del bucket S3 del data lake (Bronze/Silver/Gold).                                  |
+| `data_lake_bucket_force_destroy` | `true`      | Permite`terraform destroy` aunque el bucket tenga objetos. Mantener `true` en un lab. |
+| `glue_worker_type`               | `G.1X`      | Tipo de worker del Glue Job.                                                              |
+| `glue_number_of_workers`         | `2`         | Cantidad de workers del Glue Job.                                                         |
+| `glue_job_timeout_minutes`       | `15`        | Timeout del Glue Job.                                                                     |
+| `enable_budget_guardrail`        | `false`     | Crea un AWS Budget mensual + alerta SNS. Opcional para el lab.                            |
 
 No existe un bucket de "artifacts" separado: todo el código (script de
 Glue, queries de referencia) vive en `src/` y se sube al mismo bucket del
@@ -102,11 +101,18 @@ set +a
 Luego:
 
 ```bash
-terraform init
+terraform init && terraform fmt -check -recursive && terraform validate
 ```
 
-Esto descarga el provider `hashicorp/aws` (~> 5.0) y genera
+`terraform init` descarga el provider `hashicorp/aws` (~> 5.0) y genera
 `.terraform.lock.hcl` (si no existe ya, versionado en el repo).
+`terraform fmt -check -recursive` confirma que todos los `.tf` del
+proyecto (raíz y módulos) están formateados de forma consistente — si
+falla, corre `terraform fmt -recursive` (sin `-check`) para corregirlo
+automáticamente y vuelve a ejecutar la secuencia completa. `terraform validate` verifica que la configuración es sintácticamente válida y
+internamente consistente (tipos, referencias entre módulos) antes de
+intentar un `plan`/`apply` real. Encadenados con `&&`, cada comando solo
+corre si el anterior tuvo éxito.
 
 ## 5. Revisar el plan
 
@@ -114,16 +120,26 @@ Esto descarga el provider `hashicorp/aws` (~> 5.0) y genera
 terraform plan
 ```
 
+`infra/` está modularizado por servicio bajo `infra/modules/` — la raíz
+(`main.tf`) solo orquesta los módulos y pasa variables entre ellos.
 Identifica en el output:
 
-- **S3**: bucket del data lake (`s3_datalake.tf`), con sus configuraciones
-  de encriptación y bloqueo de acceso público.
-- **IAM**: el rol `data_job_execution` (usado por el Glue Job y el
-  Crawler) y sus políticas inline.
-- **Glue**: `aws_glue_catalog_database`, `aws_glue_job`, y dos crawlers
-  separados (`aws_glue_crawler.silver_crawler`,
-  `aws_glue_crawler.gold_crawler`) en `glue.tf`.
-- **Athena**: `aws_athena_workgroup` (`athena.tf`).
+- **S3** (`modules/s3_datalake`): bucket del data lake, con sus
+  configuraciones de encriptación y bloqueo de acceso público. El bucket
+  queda con los prefijos lógicos `bronze/`, `silver/`, `gold/` y `temp/`
+  (este último usado como `--TempDir` del Glue Job) — ningún objeto
+  placeholder se crea para ellos, el Glue Job y los usuarios los generan
+  al escribir/subir datos.
+- **IAM** (`modules/iam`): el rol `data_job_execution` (usado por el Glue
+  Job y los Crawlers) y sus políticas inline (CloudWatch Logs, budget). La
+  policy de acceso al bucket del data lake se declara en
+  `modules/s3_datalake` (no en `modules/iam`), porque el ARN del bucket
+  solo se conoce ahí — ver la regla de ubicación de IAM cross-módulo en
+  [AGENTS.md](../AGENTS.md).
+- **Glue** (`modules/glue`): `aws_glue_catalog_database`, `aws_glue_job`, y
+  dos crawlers separados (`aws_glue_crawler.silver_crawler`,
+  `aws_glue_crawler.gold_crawler`).
+- **Athena** (`modules/athena`): `aws_athena_workgroup`.
 
 ## 6. Aplicar infraestructura
 
@@ -173,7 +189,8 @@ terraform output
 Outputs relevantes para explorar por consola (sección 7 del lab):
 
 - `data_lake_bucket_name` — bucket S3 con los prefijos `bronze/`,
-  `silver/`, `gold/`.
+  `silver/`, `gold/` y `temp/` (usado internamente por Glue como
+  `--TempDir`; no requiere ninguna acción manual).
 - `glue_database_name` — Glue Data Catalog database.
 - `glue_job_name` — Glue Job del ETL medallion.
 - `glue_silver_crawler_name` — Crawler que cataloga Silver como
@@ -191,11 +208,9 @@ CLI) o en
 [prueba_manual_consola_aws.md](prueba_manual_consola_aws.md) (solo
 consola, sin ningún comando de terminal). Resumen:
 
-1. Sube `data/orders.csv` a
-   `s3://<data_lake_bucket_name>/bronze/orders/source=<nombre-origen>/`
-   (vía consola o `aws s3 cp`) — la partición `source=` permite combinar
-   varios orígenes con el mismo esquema en un solo pipeline (ver
-   docstring de [src/glue/transform.py](../src/glue/transform.py)).
+1. Sube `data/orders.csv` directo a
+   `s3://<data_lake_bucket_name>/bronze/orders/` (vía consola o
+   `aws s3 cp`) — sin subcarpeta adicional.
 2. En la consola de AWS Glue, ejecuta el Job indicado en
    `glue_job_name`.
 3. Verifica que el Job finalizó correctamente y revisa los logs en
@@ -250,3 +265,6 @@ Bronze/Silver/Gold, resultados de Athena, el script de Glue).
 - [Documento del laboratorio (sesión 4)](sesion_04_laboratorio_challenges.md)
 - [AGENTS.md](../AGENTS.md) — approval boundaries y guardrails de
   AWS/Terraform aplicados en este stack.
+- [ADR 0001](internal/adr/0001-bronze-sin-source-y-modularizacion-infra.md)
+  — decisión de quitar la partición `source` de Bronze, añadir el
+  prefijo `temp/` y modularizar `infra/`.
